@@ -1,0 +1,5 @@
+ALTER TABLE table1
+    ADD COLUMN col1 TEXT;
+
+ALTER TABLE table2
+    ADD COLUMN col1 TEXT;

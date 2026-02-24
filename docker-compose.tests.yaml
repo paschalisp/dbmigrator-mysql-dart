@@ -1,0 +1,36 @@
+services:
+  # MySQL database for tests
+  test-mysql:
+    image: mysql:8
+    environment:
+      MYSQL_USER: test
+      MYSQL_PASSWORD: test
+      MYSQL_DATABASE: test_db
+      MYSQL_ROOT_PASSWORD: test
+    ports:
+      - "3906:3306"  # non-default port to avoid conflicts
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ptest" ]
+      interval: 2s
+      timeout: 30s
+      retries: 10
+    tmpfs:
+      - /var/lib/mysql  # RAM-backed - fast & ephemeral
+
+  # MariaDB database for tests
+  test-mariadb:
+    image: mariadb:12
+    environment:
+      MARIADB_USER: test
+      MARIADB_PASSWORD: test
+      MARIADB_DATABASE: test_db
+      MARIADB_ROOT_PASSWORD: test
+    ports:
+      - "3907:3306"  # non-default port to avoid conflicts
+    healthcheck:
+      test: [ "CMD", "healthcheck.sh", "--connect", "--innodb_initialized" ]
+      interval: 2s
+      timeout: 30s
+      retries: 10
+    tmpfs:
+      - /var/lib/mysql  # RAM-backed - fast & ephemeral
