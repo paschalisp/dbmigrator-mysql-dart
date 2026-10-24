@@ -1,8 +1,8 @@
 import 'dart:io';
 
 import 'package:dbmigrator/dbmigrator.dart';
-import 'package:mysql_client_plus/exception.dart';
-import 'package:mysql_client_plus/mysql_client_plus.dart';
+import 'package:mysql_dart/exception.dart';
+import 'package:mysql_dart/mysql_dart.dart';
 
 class MySQLMigrator with Migratable {
   MySQLMigrator({required MySQLConnection connection, required this.options}) : _conn = connection;
@@ -54,19 +54,23 @@ class MySQLMigrator with Migratable {
 
   @override
   Future<void> acquireLock() async {
-    final stmt = await _conn.prepare('SELECT CAST(GET_LOCK(?, ?) AS SIGNED INTEGER) AS lock_acquired');
-    final result = await stmt.execute([options.lockKey, options.timeout.inSeconds]);
+    final result = await _conn.execute('SELECT GET_LOCK(:key, :timeout) AS lock_acquired', {
+      'key': options.lockKey,
+      'timeout': options.timeout.inSeconds,
+    });
 
     final lock = result.rows.firstOrNull?.assoc()['lock_acquired'];
-    if (lock ?? 0 == 0) {
-      throw MigrationError(message: 'Failed to acquire lock "${options.lockKey}"');
+    // GET_LOCK returns 1 on success, 0 on timeout and NULL on error
+    if (int.tryParse('$lock') != 1) {
+      throw MigrationError(
+        message: 'Failed to acquire lock "${options.lockKey}" within ${options.timeout.inSeconds}s timeout.',
+      );
     }
   }
 
   @override
   Future<void> releaseLock() async {
-    final stmt = await _conn.prepare('SELECT CAST(RELEASE_LOCK(?) AS SIGNED INTEGER)');
-    await stmt.execute([options.lockKey]);
+    await _conn.execute('SELECT RELEASE_LOCK(:key)', {'key': options.lockKey});
   }
 
   @override
@@ -82,25 +86,27 @@ class MySQLMigrator with Migratable {
     if (params.isNotEmpty && obj is! String) throw ArgumentError('when params are given, then obj has to be a string');
 
     if (params.isNotEmpty) {
-      await ctx.execute(obj as String, params);
-    } else {
-      await ctx.execute(obj.toString());
+      return await ctx.execute(obj as String, params);
     }
+
+    // Migration scripts may contain multiple statements; they are sent to the server as a single query.
+    return await ctx.execute(obj.toString());
   }
 
   @override
   Future<({String version, String checksum})?> queryVersion() async {
     try {
-      final sql = 'SELECT version, checksum FROM $versionTable ORDER BY id DESC LIMIT 1';
+      final sql =
+          'SELECT version, checksum FROM `${options.schema}`.`${options.versionTable}` ORDER BY id DESC LIMIT 1';
       final result = await _conn.execute(sql);
-      final row = result.rows.isEmpty ? {} : result.rows.first.assoc();
+      final row = result.rows.isEmpty ? <String, dynamic>{} : result.rows.first.assoc();
 
       return (version: row['version'] as String? ?? '', checksum: row['checksum'] as String? ?? '');
     } catch (e) {
-      if (!isRetryable(e)) {
+      if (e is MySQLServerException && e.errorCode == 1146) {
         String sql =
             """
-            CREATE TABLE IF NOT EXISTS ${options.versionTable} (
+            CREATE TABLE IF NOT EXISTS `${options.schema}`.`${options.versionTable}` (
                  id           BIGINT AUTO_INCREMENT PRIMARY KEY,
                  version      VARCHAR(255) NOT NULL,
                  checksum     VARCHAR(255) NOT NULL,
@@ -114,9 +120,13 @@ class MySQLMigrator with Migratable {
 
         sql =
             """
-            CREATE INDEX idx_${options.versionTable}_version ON ${options.versionTable} (version);
+            CREATE INDEX `idx_${options.versionTable}_version` ON `${options.schema}`.`${options.versionTable}` (version);
             """;
-        await _conn.execute(sql);
+        try {
+          await _conn.execute(sql);
+        } catch (_) {
+          // Index might already exist
+        }
 
         return (version: Migratable.minVersion, checksum: '');
       }
@@ -129,19 +139,18 @@ class MySQLMigrator with Migratable {
   Future<void> saveVersion({required MigrationResult result, dynamic ctx, String? comment}) async {
     if (ctx == null || ctx is! MySQLConnection) throw ArgumentError('ctx is not a MySQLConnection instance');
 
-    final stmt = await ctx.prepare(
-      """INSERT INTO ${options.versionTable} (version, checksum, started_at, completed_at, direction, comments)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+    await ctx.execute(
+      """INSERT INTO `${options.schema}`.`${options.versionTable}` (version, checksum, started_at, completed_at, direction, comments)
+           VALUES (:version, :checksum, :started_at, :completed_at, :direction, :comments)""",
+      {
+        'version': result.toVersion,
+        'checksum': result.checksum,
+        'started_at': result.started.toIso8601String(),
+        'completed_at': result.completed.toIso8601String(),
+        'direction': result.direction == MigrationDirection.down ? 'down' : 'up',
+        'comments': comment,
+      },
     );
-
-    await stmt.execute([
-      result.toVersion,
-      result.checksum,
-      result.started,
-      result.completed,
-      result.direction == MigrationDirection.down ? 'down' : 'up',
-      comment,
-    ]);
   }
 }
 
@@ -150,11 +159,14 @@ class MySQLMigrationOptions extends MigrationOptions {
     required super.path,
     super.filesPattern,
     super.directoryBased,
+    super.schema,
     super.versionTable,
     super.retries,
     super.retryDelay,
     super.timeout,
     super.checksums,
     super.encoding,
-  }) : assert(versionTable.isNotEmpty, 'version table must not be empty');
+    super.lockKey,
+  }) : assert(schema.isNotEmpty, 'schema must not be empty'),
+       assert(versionTable.isNotEmpty, 'version table must not be empty');
 }

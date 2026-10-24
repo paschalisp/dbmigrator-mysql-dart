@@ -6,7 +6,7 @@ A MySQL/MariaDB database migration library with file-based, versioned schema man
 ## Usage
 ```dart
 import 'package:dbmigrator_mysql/dbmigrator_mysql.dart';
-import 'mysql_client_plus/mysql_client_plus.dart';
+import 'package:mysql_dart/mysql_dart.dart';
 
 void main() async {
   final conn = await MySQLConnection.createConnection(
@@ -15,14 +15,14 @@ void main() async {
     userName: "test",
     password: "test",
     databaseName: "test_db",
-    collation: 'utf8_general_ci',
+    collation: 'utf8mb4_general_ci',
   );
 
   // actually connect to database
   await conn.connect();
 
-  final res = await conn.migrator(options: MySQLMigrationOptions(path: './migrations')).migrate(version: '2.0.0');
-  print(result.message); // "Migrated from 1.0.0 ➡ 2.0.0 in 3 seconds."
+  final res = await conn.migrator(options: MySQLMigrationOptions(schema: 'test_db', path: './migrations')).migrate(version: '2.0.0');
+  print(res.message); // "Migrated from 1.0.0 ➡ 2.0.0 in 3 seconds."
 }
 ```
 
@@ -46,6 +46,25 @@ Briefly, the package provides the following features:
 > For a detailed list of **features** and **configuration options**, see the [dbmigrator](https://pub.dev/packages/dbmigrator),
 which implements the migration logic this package derives from.
 
+
+## Writing migration scripts
+
+A migration file may contain any number of statements (DDL, multi-row `INSERT`s, stored routines, comments, ...). The whole
+file is sent to the server as a single multi-statement query, so the script is parsed by the server and not by this package.
+
+Keep in mind:
+
+- **`DELIMITER` is not supported.** It is a client-side command of the `mysql` CLI, not SQL, and the server rejects it. It is
+  not needed: the server parses `BEGIN ... END` bodies of procedures, functions and triggers by itself, so end them with a
+  plain `;`.
+- **Do not write empty statements** (`;;`, `; ;`, or a comment followed by a bare `;`). The server rejects them inside a
+  multi-statement query. An empty script is rejected as well.
+- **DDL is not transactional in MySQL/MariaDB.** Statements such as `CREATE`, `ALTER` and `DROP` commit implicitly, so if a
+  statement in the middle of a script fails, the earlier statements stay applied and the version is not recorded. Prefer small,
+  idempotent scripts (`IF NOT EXISTS` / `IF EXISTS`) so that a failed migration can be safely re-run.
+
+The test suite covers this with real-world fixtures (`test/migrations/complex`: mysqldump style output, inserts with tricky
+strings, comments, Unicode, and routines/triggers) executed against both MySQL and MariaDB.
 
 ## Additional information
 

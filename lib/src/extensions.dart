@@ -1,4 +1,4 @@
-import 'package:mysql_client_plus/mysql_client_plus.dart';
+import 'package:mysql_dart/mysql_dart.dart';
 
 import 'dbmigrator_mysql.dart';
 
