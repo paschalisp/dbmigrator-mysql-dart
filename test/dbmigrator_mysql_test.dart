@@ -422,12 +422,12 @@ void main() {
           expect(await snapshot(), expectedAt(version), reason: 'after upgrading to $version');
         }
 
-        for (final version in versions.reversed.skip(1).followedBy(['0.0.0'])) {
+        for (final version in versions.reversed.skip(1).followedBy(['0.0.1'])) {
           final res = await conn.migrator(options: options).migrate(version: version);
           expect(res.direction, MigrationDirection.down);
           expect(
             await snapshot(),
-            version == '0.0.0' ? isEmpty : expectedAt(version),
+            version == '0.0.1' ? isEmpty : expectedAt(version),
             reason: 'after downgrading to $version',
           );
         }
@@ -554,7 +554,7 @@ void main() {
 
       test('downgrading drops the routines and tables', () async {
         await conn.migrator(options: options).migrate(version: '2.0.0');
-        final res = await conn.migrator(options: options).migrate(version: '0.0.0');
+        final res = await conn.migrator(options: options).migrate(version: '0.0.1');
         expect(res.direction, MigrationDirection.down);
 
         await expectLater(conn.execute('SELECT * FROM complex_items'), throwsA(isA<MySQLServerException>()));
